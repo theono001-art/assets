@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+/*
+ SmaboExchange
+ - No price setting
+ - No custody
+ - No admin control over funds
+ - Works with standard Uniswap V2-style routers
+*/
+
+interface IUniswapV2Router02 {
+    function WETH() external pure returns (address);
+
+    function swapExactETHForTokensSupportingFeeOnTransferTokens(
+        uint amountOutMin,
+        address[] calldata path,
+        address to,
+        uint deadline
+    ) external payable;
+
+    function swapExactTokensForETHSupportingFeeOnTransferTokens(
+        uint amountIn,
+        uint amountOutMin,
+        address[] calldata path,
+        address to,
+        uint deadline
+    ) external;
+
+    function swapExactTokensForTokensSupportingFeeOnTransferTokens(
+        uint amountIn,
+        uint amountOutMin,
+        address[] calldata path,
+        address to,
+        uint deadline
+    ) external;
+}
+
+interface IERC20 {
+    function transferFrom(address from, address to, uint value) external returns (bool);
+    function approve(address spender, uint value) external returns (bool);
+}
+
+contract SmaboExchange {
+
+    address public immutable ROUTER;
+
+    constructor(address router) {
+        ROUTER = router;
+    }
+
+    /// ETH → Token (เช่น ETH → SMABO)
+    function swapETHForToken(
+        uint minOut,
+        address[] calldata path
+    ) external payable {
+        require(path.length >= 2, "Invalid path");
+
+        IUniswapV2Router02(ROUTER)
+            .swapExactETHForTokensSupportingFeeOnTransferTokens{value: msg.value}(
+                minOut,
+                path,
+                msg.sender,
+                block.timestamp
+            );
+    }
+
+    /// Token → ETH
+    function swapTokenForETH(
+        uint amountIn,
+        uint minOut,
+        address[] calldata path
+    ) external {
+        require(path.length >= 2, "Invalid path");
+
+        IERC20(path[0]).transferFrom(msg.sender, address(this), amountIn);
+        IERC20(path[0]).approve(ROUTER, amountIn);
+
+        IUniswapV2Router02(ROUTER)
+            .swapExactTokensForETHSupportingFeeOnTransferTokens(
+                amountIn,
+                minOut,
+                path,
+                msg.sender,
+                block.timestamp
+            );
+    }
+
+    /// Token → Token (หลาย hop ได้)
+    function swapTokenForToken(
+        uint amountIn,
+        uint minOut,
+        address[] calldata path
+    ) external {
+        require(path.length >= 2, "Invalid path");
+
+        IERC20(path[0]).transferFrom(msg.sender, address(this), amountIn);
+        IERC20(path[0]).approve(ROUTER, amountIn);
+
+        IUniswapV2Router02(ROUTER)
+            .swapExactTokensForTokensSupportingFeeOnTransferTokens(
+                amountIn,
+                minOut,
+                path,
+                msg.sender,
+                block.timestamp
+            );
+    }
+
+    receive() external payable {}
+}
