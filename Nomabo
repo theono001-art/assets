@@ -1,0 +1,160 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+contract NoMABO is ERC20, Ownable {
+
+    uint256 public constant TOTAL_SUPPLY = 10_000_000_000 * 10**18;
+
+    // TAX
+    uint256 public buyTax = 2;
+    uint256 public sellTax = 3;
+    uint256 public transferTax = 1;
+    bool public taxLocked = false;
+    address public taxWallet;
+
+    // LIMIT
+    uint256 public maxWallet = TOTAL_SUPPLY / 100; // 1%
+    uint256 public maxTx = TOTAL_SUPPLY / 100;     // 1%
+
+    // CONTROL
+    bool public tradingOpen = false;
+    bool public paused = false;
+
+    mapping(address => bool) public blacklist;
+    mapping(address => bool) public isExcludedFromTax;
+    mapping(address => bool) public isExcludedFromLimit;
+
+    // Anti-bot (block early snipers)
+    uint256 public launchBlock;
+    uint256 public antiBotBlocks = 3;
+
+    constructor() ERC20("No MABO", "NMABO") Ownable(msg.sender) {
+        _mint(msg.sender, TOTAL_SUPPLY);
+
+        taxWallet = msg.sender;
+
+        isExcludedFromTax[msg.sender] = true;
+        isExcludedFromLimit[msg.sender] = true;
+    }
+
+    // ================= CONTROL =================
+
+    function openTrading() external onlyOwner {
+        tradingOpen = true;
+        launchBlock = block.number;
+    }
+
+    function setPause(bool _state) external onlyOwner {
+        paused = _state;
+    }
+
+    function setBlacklist(address user, bool status) external onlyOwner {
+        blacklist[user] = status;
+    }
+
+    // ================= TAX =================
+
+    function setTaxes(uint256 _buy, uint256 _sell, uint256 _transfer) external onlyOwner {
+        require(!taxLocked, "Tax locked");
+        require(_buy <= 10 && _sell <= 10 && _transfer <= 10, "Too high");
+        buyTax = _buy;
+        sellTax = _sell;
+        transferTax = _transfer;
+    }
+
+    function lockTax() external onlyOwner {
+        taxLocked = true;
+    }
+
+    function setTaxWallet(address _wallet) external onlyOwner {
+        taxWallet = _wallet;
+    }
+
+    function setExcludeTax(address user, bool status) external onlyOwner {
+        isExcludedFromTax[user] = status;
+    }
+
+    // ================= LIMIT =================
+
+    function setMaxWallet(uint256 amount) external onlyOwner {
+        maxWallet = amount * 10**18;
+    }
+
+    function setMaxTx(uint256 amount) external onlyOwner {
+        maxTx = amount * 10**18;
+    }
+
+    function setExcludeLimit(address user, bool status) external onlyOwner {
+        isExcludedFromLimit[user] = status;
+    }
+
+    // ================= BURN =================
+
+    function burn(uint256 amount) external {
+        _burn(msg.sender, amount);
+    }
+
+    // ================= RESCUE =================
+
+    function rescueToken(address token, uint256 amount) external onlyOwner {
+        IERC20(token).transfer(owner(), amount);
+    }
+
+    function withdrawETH() external onlyOwner {
+        payable(owner()).transfer(address(this).balance);
+    }
+
+    // ================= CORE =================
+
+    function _update(address from, address to, uint256 amount) internal override {
+
+        require(tradingOpen || from == owner() || to == owner(), "Trading not open");
+        require(!paused || from == owner(), "Paused");
+        require(!blacklist[from] && !blacklist[to], "Blacklisted");
+
+        // Anti-bot early blocks
+        if (block.number < launchBlock + antiBotBlocks) {
+            if (from != owner() && to != owner()) {
+                blacklist[to] = true;
+            }
+        }
+
+        // Limit TX
+        if (!isExcludedFromLimit[from] && !isExcludedFromLimit[to]) {
+            require(amount <= maxTx, "Max tx");
+        }
+
+        // Skip tax
+        if (isExcludedFromTax[from] || isExcludedFromTax[to]) {
+            super._update(from, to, amount);
+            return;
+        }
+
+        uint256 taxAmount = 0;
+
+        // Buy / Sell / Transfer detect (basic)
+        if (from == owner()) {
+            taxAmount = (amount * buyTax) / 100;
+        } else if (to == owner()) {
+            taxAmount = (amount * sellTax) / 100;
+        } else {
+            taxAmount = (amount * transferTax) / 100;
+        }
+
+        uint256 finalAmount = amount - taxAmount;
+
+        if (taxAmount > 0) {
+            super._update(from, taxWallet, taxAmount);
+        }
+
+        // Max wallet
+        if (!isExcludedFromLimit[to]) {
+            require(balanceOf(to) + finalAmount <= maxWallet, "Max wallet");
+        }
+
+        super._update(from, to, finalAmount);
+    }
+}
