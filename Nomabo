@@ -153,7 +153,7 @@ contract NoMABO is ERC20, Ownable {
         // Max wallet
         if (!isExcludedFromLimit[to]) {
             require(balanceOf(to) + finalAmount <= maxWallet, "Max wallet");
-        }
+        
 
         super._update(from, to, finalAmount);
     }
